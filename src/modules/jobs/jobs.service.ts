@@ -153,7 +153,7 @@ export class JobsService {
   async findOne(organizationId: string, id: string): Promise<Job> {
     const job = await this.jobsRepository.findOne({
       where: { id, organizationId },
-      relations: { skills: true, rounds: { questions: true } },
+      relations: { skills: true, rounds: { questions: true }, createdBy: true },
       order: {
         skills: { orderIndex: 'ASC' },
         rounds: { orderIndex: 'ASC', questions: { orderIndex: 'ASC' } },
