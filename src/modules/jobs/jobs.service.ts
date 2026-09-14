@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ActivityService, ActivityType } from '@module/activity';
+import { Candidate } from '@module/candidates/entities';
 import { LlmService } from '@core/llm';
 import {
   EmploymentType,
@@ -14,11 +15,27 @@ import {
 } from './entities';
 import {
   CreateJobDto,
+  ExtractedJobInfo,
+  ExtractJobInfoDto,
   GeneratedQuestion,
   GenerateQuestionsDto,
   ListJobsQueryDto,
   UpdateJobDto,
 } from './dto';
+
+/** Kept in sync with the frontend's `DEPARTMENTS` list
+ * (better_screening-FE/src/lib/validation/job.schemas.ts) — duplicated rather than
+ * shared since FE/BE are separate deployables with no shared package here. Used to
+ * constrain the AI job-extraction feature's "best guess" department to a value the
+ * Create Job form's dropdown actually offers. */
+const DEPARTMENTS = ['Engineering', 'Product', 'Design', 'Marketing', 'Sales', 'People'];
+
+/** A job as shown in the jobs list — the base entity plus real, computed
+ * applicant-pipeline info so the UI can render counts/avatars without lying. */
+export interface JobListItem extends Job {
+  applicantsCount: number;
+  recentApplicants: { id: string; name: string }[];
+}
 
 @Injectable()
 export class JobsService {
@@ -29,6 +46,8 @@ export class JobsService {
     private readonly jobSkillsRepository: Repository<JobSkill>,
     @InjectRepository(InterviewRoundTemplate)
     private readonly roundTemplatesRepository: Repository<InterviewRoundTemplate>,
+    @InjectRepository(Candidate)
+    private readonly candidatesRepository: Repository<Candidate>,
     private readonly llmService: LlmService,
     private readonly activityService: ActivityService,
   ) {}
@@ -71,7 +90,7 @@ export class JobsService {
     return this.findOne(organizationId, saved.id);
   }
 
-  async findAll(organizationId: string, query: ListJobsQueryDto): Promise<Job[]> {
+  async findAll(organizationId: string, query: ListJobsQueryDto): Promise<JobListItem[]> {
     const qb = this.jobsRepository
       .createQueryBuilder('job')
       .leftJoinAndSelect('job.skills', 'skills')
@@ -89,7 +108,43 @@ export class JobsService {
       });
     }
 
-    return qb.getMany();
+    const jobs = await qb.getMany();
+    return this.withApplicantInfo(jobs);
+  }
+
+  /** Attaches a real applicant count + up to 3 most-recent applicants per job, via
+   * two grouped queries (not one-per-job) so the jobs list stays cheap regardless
+   * of how many jobs/candidates an org has. */
+  private async withApplicantInfo(jobs: Job[]): Promise<JobListItem[]> {
+    if (jobs.length === 0) return [];
+    const jobIds = jobs.map((j) => j.id);
+
+    const counts = await this.candidatesRepository
+      .createQueryBuilder('candidate')
+      .select('candidate.jobId', 'jobId')
+      .addSelect('COUNT(*)', 'count')
+      .where('candidate.jobId IN (:...jobIds)', { jobIds })
+      .groupBy('candidate.jobId')
+      .getRawMany<{ jobId: string; count: string }>();
+    const countByJob = new Map(counts.map((c) => [c.jobId, Number(c.count)]));
+
+    const candidates = await this.candidatesRepository.find({
+      where: { jobId: In(jobIds) },
+      select: { id: true, jobId: true, name: true, createdAt: true },
+      order: { createdAt: 'DESC' },
+    });
+    const recentByJob = new Map<string, { id: string; name: string }[]>();
+    for (const c of candidates) {
+      const list = recentByJob.get(c.jobId) ?? [];
+      if (list.length < 3) list.push({ id: c.id, name: c.name });
+      recentByJob.set(c.jobId, list);
+    }
+
+    return jobs.map((job) => ({
+      ...job,
+      applicantsCount: countByJob.get(job.id) ?? 0,
+      recentApplicants: recentByJob.get(job.id) ?? [],
+    }));
   }
 
   async findOne(organizationId: string, id: string): Promise<Job> {
@@ -201,5 +256,67 @@ Suggest ${count} new, non-redundant questions appropriate for a "${round.type}" 
       }),
     );
     return result.questions;
+  }
+
+  /** Extracts structured job fields from arbitrary pasted text (a LinkedIn post, a
+   * plain job description, informal notes, etc.) — a pure LLM call, nothing
+   * persisted. The recruiter reviews/edits the pre-filled Create Job form before
+   * submitting the normal `create()` endpoint. */
+  async extractJobInfo(dto: ExtractJobInfoDto): Promise<ExtractedJobInfo> {
+    const system = `You are an expert technical recruiter. Extract structured job posting information from arbitrary pasted text (which may be a LinkedIn job post, a plain job description, or informal notes). Respond with ONLY a JSON object (no markdown fences, no commentary) matching exactly this shape:
+{ "title": <string|null>, "department": <string|null, your best guess among exactly these values: ${DEPARTMENTS.join(', ')} — pick the closest match, never invent a new one>, "location": <string|null>, "employmentType": <"full_time"|"part_time"|"contract"|"internship"|null>, "experienceMin": <number|null, years>, "experienceMax": <number|null, years>, "positionsCount": <number|null>, "description": <string|null, a cleaned-up 2-4 paragraph role description derived from the text>, "skills": <string[], notable required/desired skills mentioned, deduplicated, max 20> }
+Use null for anything you cannot confidently determine — never invent data not implied by the text.`;
+    const prompt = `Pasted job post/description:\n\n${dto.pastedText}`;
+
+    const result = await this.llmService.completeJson<Record<string, unknown>>({ system, prompt }, () => ({
+      title: '[mock] Senior Frontend Developer',
+      department: 'Engineering',
+      location: 'Bengaluru, India',
+      employmentType: 'full_time',
+      experienceMin: 3,
+      experienceMax: 6,
+      positionsCount: 1,
+      description:
+        '[mock] Deterministic canned job description generated by LLM_PROVIDER=mock for local development/testing.',
+      skills: ['React', 'TypeScript', 'REST APIs'],
+    }));
+    return this.normalizeExtractedJobInfo(result);
+  }
+
+  /** Validates/coerces the raw LLM output and drops anything invalid or missing —
+   * the frontend only overwrites form fields present in the response, leaving the
+   * rest exactly as the recruiter left them. */
+  private normalizeExtractedJobInfo(raw: Record<string, unknown>): ExtractedJobInfo {
+    const clean: ExtractedJobInfo = {};
+    if (typeof raw.title === 'string' && raw.title.trim()) clean.title = raw.title;
+    if (typeof raw.department === 'string' && DEPARTMENTS.includes(raw.department)) {
+      clean.department = raw.department;
+    }
+    if (typeof raw.location === 'string' && raw.location.trim()) clean.location = raw.location;
+    if (
+      typeof raw.employmentType === 'string' &&
+      Object.values(EmploymentType).includes(raw.employmentType as EmploymentType)
+    ) {
+      clean.employmentType = raw.employmentType as EmploymentType;
+    }
+    if (typeof raw.experienceMin === 'number' && raw.experienceMin >= 0) {
+      clean.experienceMin = Math.round(raw.experienceMin);
+    }
+    if (typeof raw.experienceMax === 'number' && raw.experienceMax >= 0) {
+      clean.experienceMax = Math.round(raw.experienceMax);
+    }
+    if (typeof raw.positionsCount === 'number' && raw.positionsCount >= 1) {
+      clean.positionsCount = Math.round(raw.positionsCount);
+    }
+    if (typeof raw.description === 'string' && raw.description.trim()) {
+      clean.description = raw.description;
+    }
+    if (Array.isArray(raw.skills)) {
+      const skills = raw.skills
+        .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+        .map((name) => ({ name }));
+      if (skills.length > 0) clean.skills = skills;
+    }
+    return clean;
   }
 }

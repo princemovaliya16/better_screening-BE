@@ -2,9 +2,9 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmService } from '@core/llm';
-import { MailService } from '@core/mail';
 import { Candidate } from '@module/candidates/entities';
 import { Interview } from '@module/interviews/entities';
+import { MailAccountsService } from '@module/mail-accounts';
 import { CandidateEmail } from './entities';
 import { ComposeEmailDto, SendEmailDto } from './dto';
 
@@ -28,7 +28,7 @@ export class EmailComposerService {
     @InjectRepository(CandidateEmail)
     private readonly emailsRepository: Repository<CandidateEmail>,
     private readonly llmService: LlmService,
-    private readonly mailService: MailService,
+    private readonly mailAccountsService: MailAccountsService,
   ) {}
 
   private async loadCandidate(organizationId: string, candidateId: string): Promise<Candidate> {
@@ -77,7 +77,11 @@ Write a warm, concise, professional "${dto.type}" email for this candidate.`;
     dto: SendEmailDto,
   ): Promise<CandidateEmail> {
     const candidate = await this.loadCandidate(organizationId, candidateId);
-    await this.mailService.sendMail({ to: candidate.email, subject: dto.subject, html: dto.body });
+    await this.mailAccountsService.sendCandidateEmail(sentByUserId, organizationId, {
+      to: candidate.email,
+      subject: dto.subject,
+      html: dto.body,
+    });
 
     const email = this.emailsRepository.create({
       organizationId,

@@ -8,12 +8,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { getEnv } from '@config/env';
 import { ActivityService, ActivityType } from '@module/activity';
-import { MailService } from '@core/mail';
 import { Candidate, CandidateStage } from '@module/candidates/entities';
 import { CandidatesService } from '@module/candidates/candidates.service';
 import { InterviewSessionService } from '@module/interview-session';
 import { InterviewRoundType } from '@module/jobs/entities';
 import { JobsService } from '@module/jobs/jobs.service';
+import { MailAccountsService } from '@module/mail-accounts';
 import { EvaluationProcessingProducerService } from '@module/transcript-ingestion';
 import { InterviewQuestion, Interview, InterviewStatus } from './entities';
 import { ListInterviewsQueryDto, RescheduleInterviewDto, ScheduleInterviewDto } from './dto';
@@ -38,7 +38,7 @@ export class InterviewsService {
     private readonly jobsService: JobsService,
     private readonly candidatesService: CandidatesService,
     private readonly interviewSessionService: InterviewSessionService,
-    private readonly mailService: MailService,
+    private readonly mailAccountsService: MailAccountsService,
     private readonly evaluationProcessingProducer: EvaluationProcessingProducerService,
     private readonly activityService: ActivityService,
   ) {}
@@ -164,7 +164,7 @@ export class InterviewsService {
     return this.findOne(organizationId, id);
   }
 
-  async sendInvitation(organizationId: string, id: string): Promise<Interview> {
+  async sendInvitation(organizationId: string, id: string, sentByUserId: string): Promise<Interview> {
     const interview = await this.findOne(organizationId, id);
     this.assertNotTerminal(interview);
     if (interview.status !== InterviewStatus.SCHEDULED) {
@@ -185,7 +185,7 @@ export class InterviewsService {
       hour: 'numeric',
       minute: '2-digit',
     });
-    await this.mailService.sendMail({
+    await this.mailAccountsService.sendCandidateEmail(sentByUserId, organizationId, {
       to: interview.candidate!.email,
       subject: `Interview Invitation — ${interview.job?.title ?? 'your application'}`,
       html: `<p>Hi ${candidateName},</p><p>You're invited to the <b>${interview.roundName}</b> for the <b>${interview.job?.title ?? 'role'}</b> position.</p><p>Whenever you're ready (by ${when} ${interview.timezone}), click below to begin. Once you start, you'll have ${interview.durationMinutes} minutes to complete all questions.</p><p><a href="${link}">${link}</a></p>`,

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { DatabaseModule } from '@core/database';
+import { GoogleOAuthModule } from '@core/google';
 import { JwtCoreModule } from '@core/jwt';
 import { LlmModule } from '@core/llm';
 import { MailModule } from '@core/mail';
@@ -15,6 +16,7 @@ import { EvaluationModule } from '@module/evaluation';
 import { InterviewSessionModule } from '@module/interview-session';
 import { InterviewsModule } from '@module/interviews';
 import { JobsModule } from '@module/jobs';
+import { MailAccountsModule } from '@module/mail-accounts';
 import { NotificationsModule } from '@module/notifications';
 import { OrganizationsModule } from '@module/organizations';
 import { TranscriptIngestionModule } from '@module/transcript-ingestion';
@@ -26,6 +28,7 @@ import { UsersModule } from '@module/users';
     JwtCoreModule,
     LlmModule,
     MailModule,
+    GoogleOAuthModule,
     QueueModule,
     StorageModule,
     ActivityModule,
@@ -35,6 +38,7 @@ import { UsersModule } from '@module/users';
     AuthModule,
     JobsModule,
     CandidatesModule,
+    MailAccountsModule,
     InterviewsModule,
     InterviewSessionModule,
     TranscriptIngestionModule,

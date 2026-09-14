@@ -51,7 +51,7 @@ export class InterviewsController {
 
   @Post(':id/send-invitation')
   sendInvitation(@CurrentOrgUser() user: AuthenticatedOrgUser, @Param('id') id: string) {
-    return this.interviewsService.sendInvitation(user.organizationId, id);
+    return this.interviewsService.sendInvitation(user.organizationId, id, user.uid);
   }
 
   @Post(':id/cancel')

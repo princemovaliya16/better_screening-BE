@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,10 +8,13 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { memoryStorage } from 'multer';
 import { TransformInterceptor } from '@core/dispatchers';
 import { CurrentOrgUser } from '@module/auth/decorators';
 import { OrgAuthGuard } from '@module/auth/guards';
@@ -24,6 +28,27 @@ import {
   UpdateStageDto,
 } from './dto';
 
+const RESUME_MIME_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+];
+
+const resumeUploadOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (
+    _req: unknown,
+    file: Express.Multer.File,
+    cb: (error: Error | null, acceptFile: boolean) => void,
+  ) => {
+    if (!RESUME_MIME_TYPES.includes(file.mimetype)) {
+      cb(new BadRequestException('Only PDF and DOCX resumes are supported'), false);
+      return;
+    }
+    cb(null, true);
+  },
+};
+
 @ApiTags('Candidates')
 @ApiBearerAuth()
 @UseGuards(OrgAuthGuard)
@@ -35,6 +60,17 @@ export class CandidatesController {
   @Post()
   create(@CurrentOrgUser() user: AuthenticatedOrgUser, @Body() dto: CreateCandidateDto) {
     return this.candidatesService.create(user.organizationId, dto);
+  }
+
+  /** Parses an uploaded resume into structured fields for the Add Candidate form to
+   * pre-fill — a pure extraction, nothing is persisted here. The file is never
+   * stored; only the recruiter's eventual normal `create()` submission is saved. */
+  @Post('parse-resume')
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', resumeUploadOptions))
+  parseResume(@UploadedFile() file?: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No resume file was uploaded');
+    return this.candidatesService.parseResume(file);
   }
 
   @Get()

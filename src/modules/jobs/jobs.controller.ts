@@ -15,7 +15,13 @@ import { TransformInterceptor } from '@core/dispatchers';
 import { CurrentOrgUser } from '@module/auth/decorators';
 import { OrgAuthGuard } from '@module/auth/guards';
 import { AuthenticatedOrgUser } from '@module/auth/types/jwt-payload.type';
-import { CreateJobDto, GenerateQuestionsDto, ListJobsQueryDto, UpdateJobDto } from './dto';
+import {
+  CreateJobDto,
+  ExtractJobInfoDto,
+  GenerateQuestionsDto,
+  ListJobsQueryDto,
+  UpdateJobDto,
+} from './dto';
 import { JobsService } from './jobs.service';
 
 @ApiTags('Jobs')
@@ -29,6 +35,14 @@ export class JobsController {
   @Post()
   create(@CurrentOrgUser() user: AuthenticatedOrgUser, @Body() dto: CreateJobDto) {
     return this.jobsService.create(user.organizationId, user.uid, dto);
+  }
+
+  /** Extracts structured job fields from arbitrary pasted text (a LinkedIn post, a
+   * job description, notes, etc.) for the Create Job form to pre-fill — a pure LLM
+   * call, nothing persisted here. */
+  @Post('extract')
+  extract(@Body() dto: ExtractJobInfoDto) {
+    return this.jobsService.extractJobInfo(dto);
   }
 
   @Get()

@@ -5,6 +5,7 @@ import { CandidatesModule } from '@module/candidates/candidates.module';
 import { Candidate } from '@module/candidates/entities';
 import { InterviewSessionModule } from '@module/interview-session';
 import { JobsModule } from '@module/jobs/jobs.module';
+import { MailAccountsModule } from '@module/mail-accounts';
 import { TranscriptIngestionModule } from '@module/transcript-ingestion';
 import { InterviewQuestion, Interview } from './entities';
 import { InterviewsController } from './interviews.controller';
@@ -17,6 +18,7 @@ import { InterviewsService } from './interviews.service';
     CandidatesModule,
     InterviewSessionModule,
     TranscriptIngestionModule,
+    MailAccountsModule,
     ActivityModule,
   ],
   controllers: [InterviewsController],

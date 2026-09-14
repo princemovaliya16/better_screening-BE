@@ -6,3 +6,5 @@ export * from './update-job.dto';
 export * from './list-jobs.query.dto';
 export * from './generate-questions.dto';
 export * from './generated-question.type';
+export * from './extract-job-info.dto';
+export * from './extracted-job-info.type';

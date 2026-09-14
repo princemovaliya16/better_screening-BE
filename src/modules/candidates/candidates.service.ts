@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ActivityService, ActivityType } from '@module/activity';
 import { Job } from '@module/jobs/entities';
+import { LlmService } from '@core/llm';
 import {
   CandidateNote,
   CandidateSkill,
@@ -14,6 +15,7 @@ import {
   CreateCandidateDto,
   CreateNoteDto,
   ListCandidatesQueryDto,
+  ParsedResumeInfo,
   UpdateCandidateDto,
 } from './dto';
 
@@ -29,6 +31,7 @@ export class CandidatesService {
     @InjectRepository(Job)
     private readonly jobsRepository: Repository<Job>,
     private readonly activityService: ActivityService,
+    private readonly llmService: LlmService,
   ) {}
 
   private async assertJobInOrg(organizationId: string, jobId: string): Promise<void> {
@@ -177,5 +180,70 @@ export class CandidatesService {
   async remove(organizationId: string, id: string): Promise<void> {
     const result = await this.candidatesRepository.delete({ id, organizationId });
     if (result.affected === 0) throw new NotFoundException('Candidate not found');
+  }
+
+  /** Extracts structured fields from an uploaded resume for the Add Candidate form
+   * to pre-fill — a pure LLM call, nothing persisted (the file itself is never
+   * stored). The recruiter reviews/edits the pre-filled fields before the normal
+   * `create()` submission. Mirrors `EmailComposerService.compose()`'s extraction
+   * style. */
+  async parseResume(file: Express.Multer.File): Promise<ParsedResumeInfo> {
+    const text = await this.extractResumeText(file);
+    if (!text.trim()) {
+      throw new BadRequestException('Could not extract any text from that file');
+    }
+
+    const system = `You are an expert technical recruiter. Extract structured candidate information from a resume's plain text. Respond with ONLY a JSON object (no markdown fences, no commentary) matching exactly this shape:
+{ "name": <string|null>, "email": <string|null>, "phone": <string|null>, "experienceYears": <number|null, total years of professional experience, your best estimate>, "currentCompany": <string|null, most recent employer>, "location": <string|null, city/country>, "education": <string|null, highest/most relevant qualification, e.g. "B.Tech, IIT Bombay">, "skills": <string[], notable technical/professional skills, deduplicated, max 20> }
+Use null for any field you cannot confidently determine from the text — never invent data.`;
+    const prompt = `Resume text:\n\n${text.slice(0, 15000)}`;
+
+    const result = await this.llmService.completeJson<ParsedResumeInfo>({ system, prompt }, () => ({
+      name: '[mock] Jane Doe',
+      email: 'jane.doe@example.com',
+      phone: '+91 9876543210',
+      experienceYears: 5,
+      currentCompany: '[mock] Acme Corp',
+      location: 'Bengaluru, India',
+      education: 'B.Tech, IIT Bombay',
+      skills: ['React', 'TypeScript', 'Node.js'],
+    }));
+    return this.normalizeParsedResume(result);
+  }
+
+  /** Drops null/invalid/empty fields so the frontend only overwrites form fields the
+   * model confidently extracted, leaving everything else as the recruiter left it. */
+  private normalizeParsedResume(raw: ParsedResumeInfo): ParsedResumeInfo {
+    const clean: ParsedResumeInfo = {};
+    if (raw.name) clean.name = raw.name;
+    if (raw.email) clean.email = raw.email;
+    if (raw.phone) clean.phone = raw.phone;
+    if (typeof raw.experienceYears === 'number' && raw.experienceYears >= 0) {
+      clean.experienceYears = Math.round(raw.experienceYears);
+    }
+    if (raw.currentCompany) clean.currentCompany = raw.currentCompany;
+    if (raw.location) clean.location = raw.location;
+    if (raw.education) clean.education = raw.education;
+    if (Array.isArray(raw.skills) && raw.skills.length > 0) {
+      const skills = raw.skills.filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+      if (skills.length > 0) clean.skills = skills;
+    }
+    return clean;
+  }
+
+  private async extractResumeText(file: Express.Multer.File): Promise<string> {
+    if (file.mimetype === 'application/pdf') {
+      const { PDFParse } = await import('pdf-parse');
+      const parser = new PDFParse({ data: file.buffer });
+      try {
+        const { text } = await parser.getText();
+        return text;
+      } finally {
+        await parser.destroy();
+      }
+    }
+    const mammoth = await import('mammoth');
+    const { value } = await mammoth.extractRawText({ buffer: file.buffer });
+    return value;
   }
 }
