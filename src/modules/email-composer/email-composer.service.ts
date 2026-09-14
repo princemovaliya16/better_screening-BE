@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmService } from '@core/llm';
 import { Candidate } from '@module/candidates/entities';
 import { Interview } from '@module/interviews/entities';
 import { MailAccountsService } from '@module/mail-accounts';
+import { EmailTone, OrganizationSettings } from '@module/organizations/entities';
 import { CandidateEmail } from './entities';
 import { ComposeEmailDto, SendEmailDto } from './dto';
 
@@ -12,6 +13,13 @@ export interface ComposedEmail {
   subject: string;
   body: string;
 }
+
+const TONE_DESCRIPTIONS: Record<EmailTone, string> = {
+  [EmailTone.PROFESSIONAL]: 'warm, concise, and professional',
+  [EmailTone.FRIENDLY]: 'friendly and conversational, while staying respectful',
+  [EmailTone.CONCISE]: 'brief and to-the-point — no more than a couple of short sentences',
+  [EmailTone.WARM]: 'warm, personable, and encouraging',
+};
 
 /**
  * The second of the three real, backend-owned LLM call sites (question generation and
@@ -27,6 +35,8 @@ export class EmailComposerService {
     private readonly interviewsRepository: Repository<Interview>,
     @InjectRepository(CandidateEmail)
     private readonly emailsRepository: Repository<CandidateEmail>,
+    @InjectRepository(OrganizationSettings)
+    private readonly orgSettingsRepository: Repository<OrganizationSettings>,
     private readonly llmService: LlmService,
     private readonly mailAccountsService: MailAccountsService,
   ) {}
@@ -45,6 +55,14 @@ export class EmailComposerService {
     candidateId: string,
     dto: ComposeEmailDto,
   ): Promise<ComposedEmail> {
+    const settings = await this.orgSettingsRepository.findOne({ where: { organizationId } });
+    if (settings && !settings.aiEmailDraftingEnabled) {
+      throw new BadRequestException(
+        'AI email drafting is turned off for your organization. An admin can re-enable it in Settings → AI settings, or write this email manually.',
+      );
+    }
+    const tone = TONE_DESCRIPTIONS[settings?.emailTone ?? EmailTone.PROFESSIONAL];
+
     const candidate = await this.loadCandidate(organizationId, candidateId);
 
     let interview: Interview | null = null;
@@ -55,14 +73,14 @@ export class EmailComposerService {
       if (!interview) throw new NotFoundException('Interview not found for this candidate');
     }
 
-    const system = `You are a helpful, professional recruiting coordinator drafting an email to a job candidate. Respond with ONLY a JSON object (no markdown fences, no commentary) matching exactly this shape:
+    const system = `You are a helpful recruiting coordinator drafting an email to a job candidate, in a ${tone} tone. Respond with ONLY a JSON object (no markdown fences, no commentary) matching exactly this shape:
 { "subject": <string>, "body": <string, plain text or simple HTML paragraphs, no more than a few short paragraphs> }`;
 
     const prompt = `Email type: ${dto.type}
 Candidate first name: ${candidate.name.split(' ')[0]}
 Job title: ${candidate.job?.title ?? 'the role'}
 ${interview ? `Interview round: ${interview.roundName}\nScheduled at: ${interview.scheduledAt.toISOString()}\n` : ''}${dto.additionalContext ? `Recruiter's guidance: ${dto.additionalContext}\n` : ''}
-Write a warm, concise, professional "${dto.type}" email for this candidate.`;
+Write a ${tone} "${dto.type}" email for this candidate.`;
 
     return this.llmService.completeJson<ComposedEmail>({ system, prompt }, () => ({
       subject: `[mock] ${dto.type} — ${candidate.job?.title ?? 'your application'}`,

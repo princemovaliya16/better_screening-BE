@@ -68,9 +68,12 @@ export class CandidatesController {
   @Post('parse-resume')
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file', resumeUploadOptions))
-  parseResume(@UploadedFile() file?: Express.Multer.File) {
+  parseResume(
+    @CurrentOrgUser() user: AuthenticatedOrgUser,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
     if (!file) throw new BadRequestException('No resume file was uploaded');
-    return this.candidatesService.parseResume(file);
+    return this.candidatesService.parseResume(user.organizationId, file);
   }
 
   @Get()

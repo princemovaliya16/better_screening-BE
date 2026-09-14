@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ActivityService, ActivityType } from '@module/activity';
 import { Job } from '@module/jobs/entities';
+import { OrganizationSettings } from '@module/organizations/entities';
 import { LlmService } from '@core/llm';
 import {
   CandidateNote,
@@ -30,6 +31,8 @@ export class CandidatesService {
     private readonly candidateNotesRepository: Repository<CandidateNote>,
     @InjectRepository(Job)
     private readonly jobsRepository: Repository<Job>,
+    @InjectRepository(OrganizationSettings)
+    private readonly orgSettingsRepository: Repository<OrganizationSettings>,
     private readonly activityService: ActivityService,
     private readonly llmService: LlmService,
   ) {}
@@ -187,7 +190,14 @@ export class CandidatesService {
    * stored). The recruiter reviews/edits the pre-filled fields before the normal
    * `create()` submission. Mirrors `EmailComposerService.compose()`'s extraction
    * style. */
-  async parseResume(file: Express.Multer.File): Promise<ParsedResumeInfo> {
+  async parseResume(organizationId: string, file: Express.Multer.File): Promise<ParsedResumeInfo> {
+    const settings = await this.orgSettingsRepository.findOne({ where: { organizationId } });
+    if (settings && !settings.aiResumeParseEnabled) {
+      throw new BadRequestException(
+        'AI resume parsing is turned off for your organization. An admin can re-enable it in Settings → AI settings, or fill in the form manually.',
+      );
+    }
+
     const text = await this.extractResumeText(file);
     if (!text.trim()) {
       throw new BadRequestException('Could not extract any text from that file');
@@ -225,7 +235,9 @@ Use null for any field you cannot confidently determine from the text — never 
     if (raw.location) clean.location = raw.location;
     if (raw.education) clean.education = raw.education;
     if (Array.isArray(raw.skills) && raw.skills.length > 0) {
-      const skills = raw.skills.filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+      const skills = raw.skills.filter(
+        (s): s is string => typeof s === 'string' && s.trim().length > 0,
+      );
       if (skills.length > 0) clean.skills = skills;
     }
     return clean;

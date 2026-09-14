@@ -54,6 +54,11 @@ export class InterviewsController {
     return this.interviewsService.sendInvitation(user.organizationId, id, user.uid);
   }
 
+  @Get(':id/join-link')
+  getJoinLink(@CurrentOrgUser() user: AuthenticatedOrgUser, @Param('id') id: string) {
+    return this.interviewsService.getJoinLink(user.organizationId, id);
+  }
+
   @Post(':id/cancel')
   cancel(@CurrentOrgUser() user: AuthenticatedOrgUser, @Param('id') id: string) {
     return this.interviewsService.cancel(user.organizationId, id);

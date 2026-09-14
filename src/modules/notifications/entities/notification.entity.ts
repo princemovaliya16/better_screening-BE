@@ -3,6 +3,7 @@ import { OrgScopedEntity } from '@core/database';
 
 export enum NotificationType {
   EVALUATION_READY = 'evaluation_ready',
+  INTERVIEW_SCHEDULED = 'interview_scheduled',
   GENERAL = 'general',
 }
 

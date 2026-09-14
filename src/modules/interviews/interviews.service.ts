@@ -14,6 +14,8 @@ import { InterviewSessionService } from '@module/interview-session';
 import { InterviewRoundType } from '@module/jobs/entities';
 import { JobsService } from '@module/jobs/jobs.service';
 import { MailAccountsService } from '@module/mail-accounts';
+import { NotificationsService, NotificationType } from '@module/notifications';
+import { OrganizationSettings } from '@module/organizations/entities';
 import { EvaluationProcessingProducerService } from '@module/transcript-ingestion';
 import { InterviewQuestion, Interview, InterviewStatus } from './entities';
 import { ListInterviewsQueryDto, RescheduleInterviewDto, ScheduleInterviewDto } from './dto';
@@ -35,10 +37,13 @@ export class InterviewsService {
     private readonly interviewQuestionsRepository: Repository<InterviewQuestion>,
     @InjectRepository(Candidate)
     private readonly candidatesRepository: Repository<Candidate>,
+    @InjectRepository(OrganizationSettings)
+    private readonly orgSettingsRepository: Repository<OrganizationSettings>,
     private readonly jobsService: JobsService,
     private readonly candidatesService: CandidatesService,
     private readonly interviewSessionService: InterviewSessionService,
     private readonly mailAccountsService: MailAccountsService,
+    private readonly notificationsService: NotificationsService,
     private readonly evaluationProcessingProducer: EvaluationProcessingProducerService,
     private readonly activityService: ActivityService,
   ) {}
@@ -104,6 +109,23 @@ export class InterviewsService {
       actorUserId: createdByUserId,
     });
 
+    // Only the assigned interviewer gets pinged — not the recruiter who just
+    // scheduled it themselves — and only for a different interviewer, since
+    // scheduling your own round needs no separate notification.
+    if (saved.interviewerUserId && saved.interviewerUserId !== createdByUserId) {
+      const settings = await this.orgSettingsRepository.findOne({ where: { organizationId } });
+      if (settings?.notifyOnInterviewScheduled !== false) {
+        await this.notificationsService.create({
+          organizationId,
+          userId: saved.interviewerUserId,
+          type: NotificationType.INTERVIEW_SCHEDULED,
+          title: 'Interview scheduled',
+          body: `${round.name} with ${candidate.name} — ${new Date(saved.scheduledAt).toLocaleString()}`,
+          link: `/app/interviews/${saved.id}`,
+        });
+      }
+    }
+
     return this.findOne(organizationId, saved.id);
   }
 
@@ -164,19 +186,41 @@ export class InterviewsService {
     return this.findOne(organizationId, id);
   }
 
-  async sendInvitation(organizationId: string, id: string, sentByUserId: string): Promise<Interview> {
+  /** Mints a fresh, single-use access token for the candidate portal and builds the
+   * full join URL from it. The raw token only ever exists in memory for the life of
+   * this call (only its hash is persisted, by `issueAccessToken`), so this — not a
+   * stored field — is the only way to get a usable link, whether for the invitation
+   * email or for a recruiter who wants to view/copy the link directly. */
+  private async buildJoinLink(interview: Interview, organizationId: string): Promise<string> {
+    const rawToken = await this.interviewSessionService.issueAccessToken({
+      id: interview.id,
+      candidateId: interview.candidateId,
+      organizationId,
+    });
+    return `${getEnv('CANDIDATE_PORTAL_BASE_URL')}/${rawToken}`;
+  }
+
+  /** Lets a recruiter view/copy the candidate's join link without re-sending the
+   * invitation email — e.g. to share it over Slack. Issues a new token each call. */
+  async getJoinLink(organizationId: string, id: string): Promise<{ url: string }> {
+    const interview = await this.findOne(organizationId, id);
+    this.assertNotTerminal(interview);
+    const url = await this.buildJoinLink(interview, organizationId);
+    return { url };
+  }
+
+  async sendInvitation(
+    organizationId: string,
+    id: string,
+    sentByUserId: string,
+  ): Promise<Interview> {
     const interview = await this.findOne(organizationId, id);
     this.assertNotTerminal(interview);
     if (interview.status !== InterviewStatus.SCHEDULED) {
       throw new BadRequestException('This interview has already been invited');
     }
 
-    const rawToken = await this.interviewSessionService.issueAccessToken({
-      id: interview.id,
-      candidateId: interview.candidateId,
-      organizationId,
-    });
-    const link = `${getEnv('CANDIDATE_PORTAL_BASE_URL')}/${rawToken}`;
+    const link = await this.buildJoinLink(interview, organizationId);
     const candidateName = interview.candidate?.name?.split(' ')[0] ?? 'there';
     const when = new Date(interview.scheduledAt).toLocaleString('en-US', {
       weekday: 'long',
