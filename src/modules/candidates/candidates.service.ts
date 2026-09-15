@@ -1,10 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ActivityService, ActivityType } from '@module/activity';
 import { Job } from '@module/jobs/entities';
 import { OrganizationSettings } from '@module/organizations/entities';
 import { LlmService } from '@core/llm';
+import { StorageService } from '@core/storage';
+import { randomToken } from '@core/utils/crypt.util';
 import {
   CandidateNote,
   CandidateSkill,
@@ -19,6 +21,10 @@ import {
   ParsedResumeInfo,
   UpdateCandidateDto,
 } from './dto';
+
+/** Resumes are occasionally enormous; the stored text only backs the profile view and
+ * the LLM prompt, both of which cap well below this. */
+const RESUME_TEXT_LIMIT = 50_000;
 
 @Injectable()
 export class CandidatesService {
@@ -35,7 +41,10 @@ export class CandidatesService {
     private readonly orgSettingsRepository: Repository<OrganizationSettings>,
     private readonly activityService: ActivityService,
     private readonly llmService: LlmService,
+    private readonly storageService: StorageService,
   ) {}
+
+  private readonly logger = new Logger(CandidatesService.name);
 
   private async assertJobInOrg(organizationId: string, jobId: string): Promise<void> {
     const job = await this.jobsRepository.findOne({ where: { id: jobId, organizationId } });
@@ -56,6 +65,8 @@ export class CandidatesService {
       location: dto.location,
       education: dto.education,
       resumeSummary: dto.resumeSummary,
+      resumePath: dto.resumePath,
+      resumeText: dto.resumeText,
       skills: (dto.skills ?? []).map((name) => this.candidateSkillsRepository.create({ name })),
     });
     const saved = await this.candidatesRepository.save(candidate);
@@ -208,6 +219,8 @@ export class CandidatesService {
 Use null for any field you cannot confidently determine from the text — never invent data.`;
     const prompt = `Resume text:\n\n${text.slice(0, 15000)}`;
 
+    const storedPath = await this.storeResumeFile(organizationId, file);
+
     const result = await this.llmService.completeJson<ParsedResumeInfo>({ system, prompt }, () => ({
       name: '[mock] Jane Doe',
       email: 'jane.doe@example.com',
@@ -218,7 +231,46 @@ Use null for any field you cannot confidently determine from the text — never 
       education: 'B.Tech, IIT Bombay',
       skills: ['React', 'TypeScript', 'Node.js'],
     }));
-    return this.normalizeParsedResume(result);
+    const parsed = this.normalizeParsedResume(result);
+    // Handed back to the form so the normal create() call re-attaches them to the
+    // candidate record — the file itself is already in object storage by this point.
+    if (storedPath) parsed.resumePath = storedPath;
+    parsed.resumeText = text.slice(0, RESUME_TEXT_LIMIT);
+    return parsed;
+  }
+
+  /** Uploads the resume to the resumes bucket and returns its storage key. Storage
+   * being unavailable must not fail the parse, so this logs and returns undefined —
+   * the recruiter still gets the extracted fields, just no downloadable file. */
+  private async storeResumeFile(
+    organizationId: string,
+    file: Express.Multer.File,
+  ): Promise<string | undefined> {
+    const ext = file.mimetype === 'application/pdf' ? 'pdf' : 'docx';
+    const key = `org/${organizationId}/resumes/${randomToken(8)}.${ext}`;
+    try {
+      await this.storageService.upload(this.storageService.resumesBucket, key, file.buffer, file.mimetype);
+      return key;
+    } catch (error) {
+      this.logger.warn(
+        `Resume upload failed for org ${organizationId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
+  }
+
+  /** Short-lived signed URL for the stored resume — the bucket is private, so
+   * `resumePath` is a storage key and never directly linkable. */
+  async getResumeDownloadUrl(organizationId: string, id: string): Promise<{ url: string }> {
+    const candidate = await this.findOne(organizationId, id);
+    if (!candidate.resumePath) {
+      throw new NotFoundException('This candidate has no uploaded resume');
+    }
+    const url = await this.storageService.getSignedDownloadUrl(
+      this.storageService.resumesBucket,
+      candidate.resumePath,
+    );
+    return { url };
   }
 
   /** Drops null/invalid/empty fields so the frontend only overwrites form fields the

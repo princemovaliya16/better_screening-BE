@@ -50,4 +50,14 @@ export class CreateCandidateDto {
   @IsOptional()
   @IsString()
   resumeSummary?: string;
+
+  @ApiPropertyOptional({ description: 'Storage key returned by POST /candidates/parse-resume' })
+  @IsOptional()
+  @IsString()
+  resumePath?: string;
+
+  @ApiPropertyOptional({ description: 'Plain text returned by POST /candidates/parse-resume' })
+  @IsOptional()
+  @IsString()
+  resumeText?: string;
 }

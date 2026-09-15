@@ -63,8 +63,9 @@ export class CandidatesController {
   }
 
   /** Parses an uploaded resume into structured fields for the Add Candidate form to
-   * pre-fill — a pure extraction, nothing is persisted here. The file is never
-   * stored; only the recruiter's eventual normal `create()` submission is saved. */
+   * pre-fill, and stores the file in the resumes bucket. No candidate record is
+   * written here — the returned `resumePath`/`resumeText` come back on the
+   * recruiter's eventual `create()` submission, which is what attaches them. */
   @Post('parse-resume')
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file', resumeUploadOptions))
@@ -84,6 +85,12 @@ export class CandidatesController {
   @Get(':id')
   findOne(@CurrentOrgUser() user: AuthenticatedOrgUser, @Param('id') id: string) {
     return this.candidatesService.findOne(user.organizationId, id);
+  }
+
+  /** Signed, short-lived download URL for the stored resume file. */
+  @Get(':id/resume-url')
+  resumeUrl(@CurrentOrgUser() user: AuthenticatedOrgUser, @Param('id') id: string) {
+    return this.candidatesService.getResumeDownloadUrl(user.organizationId, id);
   }
 
   @Patch(':id')
