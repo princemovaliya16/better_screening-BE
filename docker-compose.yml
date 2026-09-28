@@ -70,6 +70,33 @@ services:
       - '1080:1080' # web UI
       - '1025:1025' # smtp
 
+  # LiveKit (candidate interview room video) + Egress (per-question MP4 recording into
+  # MinIO). Host networking is the simplest way to get WebRTC/UDP working in local dev
+  # (Linux only); both reach Redis and MinIO on localhost through the ports above.
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    network_mode: host
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  livekit-egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./livekit/egress.yaml:/etc/egress.yaml:ro
+    depends_on:
+      - livekit
+
   app:
     build:
       context: .

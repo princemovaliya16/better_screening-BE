@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { DatabaseModule } from '@core/database';
 import { GoogleOAuthModule } from '@core/google';
 import { JwtCoreModule } from '@core/jwt';
+import { LivekitModule } from '@core/livekit';
 import { LlmModule } from '@core/llm';
 import { MailModule } from '@core/mail';
 import { QueueModule } from '@core/queue';
@@ -31,6 +32,7 @@ import { UsersModule } from '@module/users';
     GoogleOAuthModule,
     QueueModule,
     StorageModule,
+    LivekitModule,
     ActivityModule,
     NotificationsModule,
     OrganizationsModule,

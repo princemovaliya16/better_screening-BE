@@ -4,6 +4,7 @@ import { loadEnv } from '@config/env';
 loadEnv();
 
 import compression from 'compression';
+import { raw } from 'express';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { getEnv, getEnvNumber } from '@config/env';
@@ -17,6 +18,10 @@ async function bootstrap() {
 
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
   app.use(compression());
+  // LiveKit webhooks are signed over the exact request body (and sent as
+  // application/webhook+json, which the default JSON parser skips) — keep it raw.
+  // Registered before Nest's own body parsers, which only attach on listen().
+  app.use('/v1/livekit/webhook', raw({ type: '*/*' }));
   app.enableCors({ origin: getEnv('FRONTEND_URL', '*'), credentials: true });
   app.useGlobalFilters(new GlobalExceptionFilter());
 

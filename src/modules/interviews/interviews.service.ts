@@ -10,7 +10,7 @@ import { getEnv } from '@config/env';
 import { ActivityService, ActivityType } from '@module/activity';
 import { Candidate, CandidateStage } from '@module/candidates/entities';
 import { CandidatesService } from '@module/candidates/candidates.service';
-import { InterviewSessionService } from '@module/interview-session';
+import { InterviewRecordingItem, InterviewSessionService } from '@module/interview-session';
 import { InterviewRoundType } from '@module/jobs/entities';
 import { JobsService } from '@module/jobs/jobs.service';
 import { MailAccountsService } from '@module/mail-accounts';
@@ -253,6 +253,12 @@ export class InterviewsService {
     );
     await this.interviewSessionService.revokeTokensForInterview(id);
     return this.findOne(organizationId, id);
+  }
+
+  /** Per-question LiveKit recordings with signed playback URLs (and the transcript
+   * text, once it exists) for the recruiter's review screen. */
+  listRecordings(organizationId: string, id: string): Promise<InterviewRecordingItem[]> {
+    return this.interviewSessionService.listRecordingsForRecruiter(organizationId, id);
   }
 
   /** Re-enqueues `evaluation-processing` for an interview — e.g. after fixing an LLM

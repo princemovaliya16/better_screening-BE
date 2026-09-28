@@ -2,11 +2,11 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bullmq';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { QUEUE_NAMES, TranscriptGenerationJobPayload } from '@core/queue';
 import { StorageService } from '@core/storage';
 import { Interview } from '@module/interviews/entities';
-import { InterviewAnswer } from '@module/interview-session/entities';
+import { InterviewAnswer, PLAYABLE_STATUSES } from '@module/interview-session/entities';
 
 /**
  * Enqueues a `transcript-generation` job for the third-party STT vendor's own worker
@@ -39,7 +39,10 @@ export class TranscriptGenerationProducerService {
       return;
     }
 
-    const answers = await this.answersRepository.find({ where: { interviewId } });
+    // Only finished recordings — a FAILED (or still-processing) egress has no file to send.
+    const answers = await this.answersRepository.find({
+      where: { interviewId, status: In(PLAYABLE_STATUSES) },
+    });
     if (answers.length === 0) {
       this.logger.warn(`enqueueForInterview: interview ${interviewId} has no answers — skipping`);
       return;

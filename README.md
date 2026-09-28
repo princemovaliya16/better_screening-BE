@@ -25,9 +25,15 @@ What's implemented so far:
 - `InterviewsModule` — schedule/reschedule/cancel, send-invitation (now issues a real
   candidate access token and emails the real interview-room link).
 - `InterviewSessionModule` — the **candidate portal** backend: token-only auth (no JWT,
-  no account), session fetch (starts the clock on first open, reports per-question
-  answered state for resumability), per-question presigned upload + completion, submit
-  (idempotent), and a deadline sweep that auto-submits a round whose time ran out.
+  no account), session fetch (reports per-question answered state for resumability),
+  LiveKit room join (starts the round clock on first join), per-question server-side
+  recording via LiveKit Egress (one MP4 per question, written straight into the
+  recordings bucket), submit (idempotent), and lazy deadline enforcement that
+  auto-submits a round whose time ran out (also triggered when the candidate leaves the
+  room). Egress results arrive on a signed webhook (`POST /v1/livekit/webhook`);
+  transcription is enqueued only once the round is submitted **and** every recording has
+  settled. Recruiters get `GET /v1/interviews/:id/recordings` (signed playback URLs +
+  per-question transcript).
 - `TranscriptIngestionModule` — the STT hand-off boundary (see queue contract below):
   a producer that enqueues `transcript-generation` the moment a round is submitted
   (manually or auto-submitted by the deadline sweep), and a consumer on `transcript-ready`
@@ -71,8 +77,9 @@ KPIs/activity feed, search, team management UI, settings pages.
 
 ```
 GET  /interview-session/:token                                  session + questions
-POST /interview-session/:token/questions/:questionId/upload-url  presigned PUT url
-POST /interview-session/:token/questions/:questionId/complete    mark answer uploaded
+POST /interview-session/:token/livekit/join                       LiveKit url + publish-only token; starts the clock
+POST /interview-session/:token/questions/:questionId/recording/start  start Egress for this question
+POST /interview-session/:token/questions/:questionId/recording/stop   stop it (file confirmed via webhook)
 POST /interview-session/:token/submit                            finish the round
 ```
 
@@ -99,14 +106,24 @@ pipeline can be exercised end-to-end.
 cp .env.example .env      # adjust if your local ports differ
 npm install
 
-# Start Postgres, Redis, MinIO (+ bucket bootstrap), Maildev
-docker compose up -d postgres redis minio minio-init maildev
+# Start Postgres, Redis, MinIO (+ bucket bootstrap), Maildev, LiveKit + Egress
+docker compose up -d postgres redis minio minio-init maildev livekit livekit-egress
 
 # Run the first migration
 npm run migration:run
 
 npm run start:dev         # http://localhost:3000, Swagger at /docs
 ```
+
+### LiveKit (interview video)
+
+`livekit` and `livekit-egress` run with host networking (Linux; WebRTC needs UDP
+50000–50100 and TCP 7881). Config is in `livekit/livekit.yaml` and `livekit/egress.yaml`;
+their API key/secret must match `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` in `.env`, and
+the server posts webhooks to `http://localhost:3000/v1/livekit/webhook`. Egress writes
+recordings to MinIO at `LIVEKIT_EGRESS_S3_ENDPOINT` using the `STORAGE_*` credentials.
+For LiveKit Cloud, point `LIVEKIT_API_URL` / `LIVEKIT_WS_URL` at your project and set
+its webhook URL to the backend's public `/v1/livekit/webhook`.
 
 > If you already run Postgres locally on 5432, this compose file maps the container to
 > host port **5433** instead (see `docker-compose.yml` and `.env.example`) to avoid the
