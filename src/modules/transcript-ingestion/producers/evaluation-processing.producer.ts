@@ -4,10 +4,8 @@ import { Queue } from 'bullmq';
 import { EvaluationProcessingJobPayload, QUEUE_NAMES } from '@core/queue';
 
 /**
- * Enqueues the fully-internal `evaluation-processing` job once a transcript has been
- * persisted. No `EvaluationModule` consumes this yet (that's a later phase) — jobs
- * will simply queue up in Redis until it exists, which is fine: BullMQ jobs persist
- * until a worker picks them up.
+ * Enqueues the fully-internal `evaluation-processing` job once an interview's
+ * transcript has been persisted; consumed by EvaluationModule.
  */
 @Injectable()
 export class EvaluationProcessingProducerService {

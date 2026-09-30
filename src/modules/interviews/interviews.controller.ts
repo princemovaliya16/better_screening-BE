@@ -54,6 +54,11 @@ export class InterviewsController {
     return this.interviewsService.sendInvitation(user.organizationId, id, user.uid);
   }
 
+  @Get(':id/recordings')
+  listRecordings(@CurrentOrgUser() user: AuthenticatedOrgUser, @Param('id') id: string) {
+    return this.interviewsService.listRecordings(user.organizationId, id);
+  }
+
   @Get(':id/join-link')
   getJoinLink(@CurrentOrgUser() user: AuthenticatedOrgUser, @Param('id') id: string) {
     return this.interviewsService.getJoinLink(user.organizationId, id);

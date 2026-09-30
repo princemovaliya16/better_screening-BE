@@ -20,8 +20,7 @@
     "migration:generate": "npm run typeorm -- migration:generate -d src/core/database/data-source.ts",
     "migration:run": "npm run typeorm -- migration:run -d src/core/database/data-source.ts",
     "migration:revert": "npm run typeorm -- migration:revert -d src/core/database/data-source.ts",
-    "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts",
-    "mock:stt-worker": "ts-node -r tsconfig-paths/register src/scripts/mock-stt-worker.ts"
+    "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
@@ -43,6 +42,7 @@
     "dotenv": "^17.4.2",
     "googleapis": "^144.0.0",
     "ioredis": "^5.4.1",
+    "livekit-server-sdk": "^2.19.1",
     "mammoth": "^1.12.3",
     "nodemailer": "^9.0.3",
     "passport": "^0.7.0",

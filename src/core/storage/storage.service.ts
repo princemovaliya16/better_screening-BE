@@ -1,6 +1,11 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
+import { createWriteStream } from 'fs';
+import { mkdir, rename, rm } from 'fs/promises';
+import { dirname } from 'path';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { getEnv, getEnvBoolean, getEnvNumber } from '@config/env';
 
 /**
@@ -45,6 +50,23 @@ export class StorageService {
       new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }),
     );
     return key;
+  }
+
+  /** Streams an object to a local file. Writes to `<destPath>.part` and renames into
+   * place, so a reader of `destPath` (e.g. the transcription service on the shared
+   * audio folder) never sees a partial file. */
+  async downloadToFile(bucket: string, key: string, destPath: string): Promise<void> {
+    const { Body } = await this.client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (!(Body instanceof Readable)) throw new Error(`Empty or unreadable object: ${key}`);
+    await mkdir(dirname(destPath), { recursive: true });
+    const partPath = `${destPath}.part`;
+    try {
+      await pipeline(Body, createWriteStream(partPath));
+      await rename(partPath, destPath);
+    } catch (err) {
+      await rm(partPath, { force: true });
+      throw err;
+    }
   }
 
   get recordingsBucket(): string {

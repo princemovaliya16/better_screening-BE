@@ -25,20 +25,24 @@ What's implemented so far:
 - `InterviewsModule` — schedule/reschedule/cancel, send-invitation (now issues a real
   candidate access token and emails the real interview-room link).
 - `InterviewSessionModule` — the **candidate portal** backend: token-only auth (no JWT,
-  no account), session fetch (starts the clock on first open, reports per-question
-  answered state for resumability), per-question presigned upload + completion, submit
-  (idempotent), and a deadline sweep that auto-submits a round whose time ran out.
-- `TranscriptIngestionModule` — the STT hand-off boundary (see queue contract below):
-  a producer that enqueues `transcript-generation` the moment a round is submitted
-  (manually or auto-submitted by the deadline sweep), and a consumer on `transcript-ready`
-  that persists `interview_transcripts` and forwards to the fully-internal
-  `evaluation-processing` queue. Both consumers are idempotent against BullMQ's
-  at-least-once delivery (checked by verified redelivery in testing, not just by
-  reading the code).
-- `src/scripts/mock-stt-worker.ts` (`npm run mock:stt-worker`) — a standalone stand-in
-  for the real vendor's own worker, for local dev only. Consumes `transcript-generation`
-  and produces a canned `transcript-ready` job back, so the whole pipeline can be
-  exercised end-to-end before a real vendor is wired in.
+  no account), session fetch (reports per-question answered state for resumability),
+  LiveKit room join (starts the round clock on first join), per-question server-side
+  recording via LiveKit Egress (one MP4 per question, written straight into the
+  recordings bucket), submit (idempotent), and lazy deadline enforcement that
+  auto-submits a round whose time ran out (also triggered when the candidate leaves the
+  room). Egress results arrive on a signed webhook (`POST /v1/livekit/webhook`);
+  transcription is enqueued only once the round is submitted **and** every recording has
+  settled. Recruiters get `GET /v1/interviews/:id/recordings` (signed playback URLs +
+  per-question transcript).
+- `TranscriptIngestionModule` — the hand-off boundary with the **transcription service**
+  (`../transcript`, Python + Deepgram, run separately — see below). On submit, each
+  recorded answer's MP4 is copied from the recordings bucket into the shared audio folder
+  and a `transcription` job is queued (one per answer, `id` = answer id). The
+  `transcription-events` consumer reads the finished text from the service's HTTP API,
+  saves it on the answer (`interview_answers.transcriptText` + timed segments), deletes
+  the copied audio, and — once every answer is done — assembles `interview_transcripts`
+  and forwards to the internal `evaluation-processing` queue. Idempotent against
+  BullMQ's at-least-once delivery; events for ids that aren't ours are ignored.
 
 - `LlmModule` (`src/core/llm`) — a thin, generic "prompt in, structured JSON out"
   wrapper over the Anthropic API (`@anthropic-ai/sdk`), config-driven via
@@ -71,27 +75,22 @@ KPIs/activity feed, search, team management UI, settings pages.
 
 ```
 GET  /interview-session/:token                                  session + questions
-POST /interview-session/:token/questions/:questionId/upload-url  presigned PUT url
-POST /interview-session/:token/questions/:questionId/complete    mark answer uploaded
+POST /interview-session/:token/livekit/join                       LiveKit url + publish-only token; starts the clock
+POST /interview-session/:token/questions/:questionId/recording/start  start Egress for this question
+POST /interview-session/:token/questions/:questionId/recording/stop   stop it (file confirmed via webhook)
 POST /interview-session/:token/submit                            finish the round
 ```
 
-### AI pipeline queues (BullMQ / Redis)
+### AI pipeline queues (BullMQ / Redis, default `bull` prefix)
 
 ```
-transcript-generation   we produce, the third-party STT vendor's own worker consumes
-                         (enqueued automatically on submit/auto-submit; no resume/JD
-                         data in the payload — STT only)
-transcript-ready         the vendor produces (transcript only, no scores), we consume
-                         (TranscriptReadyProcessor persists interview_transcripts,
-                         then forwards to evaluation-processing)
-evaluation-processing    fully internal — our own producer/consumer; no consumer yet
-                         (that's EvaluationModule, a later phase)
+transcription            we produce (one job per answer: {id, audioPath, metadata}), the
+                         transcription service consumes; audio is read from the shared
+                         folder by relative path — never a URL
+transcription-events     the service produces transcription.completed / .failed (no text);
+                         we consume and fetch the text from GET <TRANSCRIPTION_API_URL>/jobs/:id
+evaluation-processing    fully internal — our own producer/consumer (EvaluationModule)
 ```
-
-For local dev without a real vendor, run `npm run mock:stt-worker` alongside the app —
-it consumes `transcript-generation` and produces a canned `transcript-ready` job so the
-pipeline can be exercised end-to-end.
 
 ## Getting started
 
@@ -99,14 +98,43 @@ pipeline can be exercised end-to-end.
 cp .env.example .env      # adjust if your local ports differ
 npm install
 
-# Start Postgres, Redis, MinIO (+ bucket bootstrap), Maildev
-docker compose up -d postgres redis minio minio-init maildev
+# Start Postgres, Redis, MinIO (+ bucket bootstrap), Maildev, LiveKit + Egress
+docker compose up -d postgres redis minio minio-init maildev livekit livekit-egress
 
 # Run the first migration
 npm run migration:run
 
 npm run start:dev         # http://localhost:3000, Swagger at /docs
 ```
+
+### Transcription service (`../transcript`)
+
+Runs separately in its own folder. `transcript/docker-compose.override.yml` (loaded
+automatically) points it at **this** backend's Redis on host port 6379, disables its own
+Redis, moves its Postgres to host port 5435, and bind-mounts `transcript/data/audio` as
+its `/data/audio` — the folder this backend writes recordings into
+(`TRANSCRIPTION_AUDIO_DIR=../transcript/data/audio`). Start the backend's Redis first.
+
+```bash
+cd ../transcript
+cp .env.example .env            # set DEEPGRAM_API_KEY (first time only)
+mkdir -p data/audio
+docker compose up -d --build    # postgres(:5435) + migrate + worker + api(:8000)
+curl localhost:8000/health      # {"status":"ok","database":true,…}
+docker compose logs -f worker   # watch jobs being transcribed
+curl localhost:8000/jobs/<answerId>   # a job's status + transcript
+docker compose down             # stop it
+```
+
+### LiveKit (interview video)
+
+`livekit` and `livekit-egress` run with host networking (Linux; WebRTC needs UDP
+50000–50100 and TCP 7881). Config is in `livekit/livekit.yaml` and `livekit/egress.yaml`;
+their API key/secret must match `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` in `.env`, and
+the server posts webhooks to `http://localhost:3000/v1/livekit/webhook`. Egress writes
+recordings to MinIO at `LIVEKIT_EGRESS_S3_ENDPOINT` using the `STORAGE_*` credentials.
+For LiveKit Cloud, point `LIVEKIT_API_URL` / `LIVEKIT_WS_URL` at your project and set
+its webhook URL to the backend's public `/v1/livekit/webhook`.
 
 > If you already run Postgres locally on 5432, this compose file maps the container to
 > host port **5433** instead (see `docker-compose.yml` and `.env.example`) to avoid the

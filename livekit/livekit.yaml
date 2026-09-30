@@ -1,0 +1,28 @@
+# LiveKit server — local dev config (docker-compose `livekit` service, host networking).
+# Keys must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in .env and egress.yaml.
+# The secret must be at least 32 characters.
+port: 7880
+bind_addresses:
+  - ''
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # Advertise local interface IPs rather than a STUN-discovered public IP — fine for a
+  # browser on the same machine/LAN. Set node_ip for anything else.
+  use_external_ip: false
+# Required for Egress (the two coordinate through Redis). Reuses the app's Redis.
+redis:
+  address: localhost:6379
+keys:
+  devkey: better-screening-dev-secret-change-me-0123456789
+room:
+  empty_timeout: 300
+# egress_started / egress_ended / participant_left events → the backend. Signed with
+# the api_key below; verified by LivekitService.receiveWebhook.
+webhook:
+  api_key: devkey
+  urls:
+    - http://localhost:3000/v1/livekit/webhook
+logging:
+  level: info
