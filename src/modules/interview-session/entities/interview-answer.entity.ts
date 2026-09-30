@@ -1,5 +1,6 @@
 import { Column, Entity, Index, Unique } from 'typeorm';
 import { AppBaseEntity } from '@core/database';
+import type { TranscriptSegment } from '@core/transcription';
 
 export enum InterviewAnswerStatus {
   /** LiveKit Egress is currently recording this question. */
@@ -11,6 +12,14 @@ export enum InterviewAnswerStatus {
   UPLOADED = 'uploaded',
   TRANSCRIBED = 'transcribed',
   SCORED = 'scored',
+}
+
+/** Per-answer state with the external transcription service. Null until the round is
+ * submitted and the recording is handed over. */
+export enum AnswerTranscriptionStatus {
+  PENDING = 'pending',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
 }
 
 /** One row per question — the candidate's raw recording, written by LiveKit Egress
@@ -57,6 +66,20 @@ export class InterviewAnswer extends AppBaseEntity {
 
   @Column({ type: 'text', nullable: true })
   failureReason?: string | null;
+
+  @Column({ type: 'enum', enum: AnswerTranscriptionStatus, nullable: true })
+  transcriptionStatus?: AnswerTranscriptionStatus | null;
+
+  /** Empty string is a valid result: the recording had no speech. */
+  @Column({ type: 'text', nullable: true })
+  transcriptText?: string | null;
+
+  /** Timed utterances from the transcription service (seconds into the recording). */
+  @Column({ type: 'jsonb', nullable: true })
+  transcriptSegments?: TranscriptSegment[] | null;
+
+  @Column({ type: 'text', nullable: true })
+  transcriptionError?: string | null;
 }
 
 /** Statuses that mean "this question has a usable recording" (or will, once the

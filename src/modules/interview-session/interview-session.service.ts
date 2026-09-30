@@ -12,13 +12,11 @@ import { hashToken, randomToken } from '@core/utils/crypt.util';
 import { LivekitService } from '@core/livekit';
 import { StorageService } from '@core/storage';
 import { Interview, InterviewStatus } from '@module/interviews/entities';
-import {
-  InterviewTranscript,
-  TranscriptGenerationProducerService,
-} from '@module/transcript-ingestion';
+import { InterviewTranscript, TranscriptionProducerService } from '@module/transcript-ingestion';
 import {
   ANSWERED_STATUSES,
   AccessTokenStatus,
+  AnswerTranscriptionStatus,
   InterviewAccessToken,
   InterviewAnswer,
   InterviewAnswerStatus,
@@ -82,6 +80,9 @@ export interface InterviewRecordingItem {
   mimeType: string | null;
   playbackUrl: string | null;
   transcriptText: string | null;
+  /** null until the round is submitted and the recording is sent for transcription. */
+  transcriptionStatus: AnswerTranscriptionStatus | null;
+  transcriptionError: string | null;
   failureReason: string | null;
 }
 
@@ -100,7 +101,7 @@ export class InterviewSessionService {
     private readonly transcriptsRepository: Repository<InterviewTranscript>,
     private readonly storageService: StorageService,
     private readonly livekitService: LivekitService,
-    private readonly transcriptGenerationProducer: TranscriptGenerationProducerService,
+    private readonly transcriptionProducer: TranscriptionProducerService,
   ) {}
 
   // ---- Called by InterviewsModule when a recruiter sends an invitation ----
@@ -213,7 +214,7 @@ export class InterviewSessionService {
     await this.maybeEnqueueTranscription(interviewId);
   }
 
-  /** Hands off to the STT vendor once the round is submitted AND every recording has
+  /** Hands off to the transcription service once the round is submitted AND every recording has
    * settled (uploaded or failed). Called from submit and from each egress_ended
    * webhook, so whichever happens last triggers it; the producer dedupes by jobId. */
   async maybeEnqueueTranscription(interviewId: string): Promise<void> {
@@ -223,7 +224,7 @@ export class InterviewSessionService {
       where: { interviewId, status: In(PENDING_STATUSES) },
     });
     if (pending > 0) return;
-    await this.transcriptGenerationProducer.enqueueForInterview(interviewId);
+    await this.transcriptionProducer.enqueueForInterview(interviewId);
   }
 
   // ---- Candidate-facing ----
@@ -580,7 +581,10 @@ export class InterviewSessionService {
                   answer.recordingStoragePath,
                 )
               : null,
-            transcriptText: transcriptByQuestionId.get(q.id) ?? null,
+            // Per-answer text appears as soon as that answer is transcribed.
+            transcriptText: answer?.transcriptText ?? transcriptByQuestionId.get(q.id) ?? null,
+            transcriptionStatus: answer?.transcriptionStatus ?? null,
+            transcriptionError: answer?.transcriptionError ?? null,
             failureReason: answer?.failureReason ?? null,
           };
         }),

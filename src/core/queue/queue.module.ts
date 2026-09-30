@@ -4,7 +4,7 @@ import { getEnv, getEnvNumber } from '@config/env';
 import { QUEUE_NAMES } from './queue.constants';
 
 /**
- * Registers the shared Redis connection for BullMQ and declares all three queues so
+ * Registers the shared Redis connection for BullMQ and declares all queues so
  * any feature module can `@InjectQueue(QUEUE_NAMES.X)` or `@Processor(QUEUE_NAMES.X)`
  * without redeclaring connection options.
  */
@@ -22,8 +22,8 @@ import { QUEUE_NAMES } from './queue.constants';
       }),
     }),
     BullModule.registerQueue(
-      { name: QUEUE_NAMES.TRANSCRIPT_GENERATION },
-      { name: QUEUE_NAMES.TRANSCRIPT_READY },
+      { name: QUEUE_NAMES.TRANSCRIPTION },
+      { name: QUEUE_NAMES.TRANSCRIPTION_EVENTS },
       { name: QUEUE_NAMES.EVALUATION_PROCESSING },
     ),
   ],

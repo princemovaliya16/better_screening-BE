@@ -32,8 +32,10 @@ services:
       timeout: 5s
       retries: 10
 
+  # Community builds of MinIO / mc — the official minio/minio and minio/mc images are
+  # no longer pullable from Docker Hub (or Quay without a login).
   minio:
-    image: minio/minio:latest
+    image: pgsty/minio:latest
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -51,7 +53,7 @@ services:
       retries: 10
 
   minio-init:
-    image: minio/mc:latest
+    image: pgsty/mc:latest
     depends_on:
       minio:
         condition: service_healthy

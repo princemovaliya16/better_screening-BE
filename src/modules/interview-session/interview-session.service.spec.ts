@@ -33,7 +33,11 @@ function makeService() {
   return { service, interviewsRepository, answersRepository, livekitService, producer };
 }
 
-function egressEnded(status: EgressStatus, file?: { size?: bigint; duration?: bigint }, error = ''): WebhookEvent {
+function egressEnded(
+  status: EgressStatus,
+  file?: { size?: bigint; duration?: bigint },
+  error = '',
+): WebhookEvent {
   return {
     event: 'egress_ended',
     egressInfo: new EgressInfo({

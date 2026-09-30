@@ -4,40 +4,33 @@
  * of a queue, so they live in `core/queue` rather than inside any one feature module.
  */
 
-/** We produce this; the third-party STT vendor's own worker consumes it. Deliberately
- * carries no resume/JD data — the vendor's only job is speech-to-text. `questionText`
- * is included only as optional context for the transcriber, not for evaluation. */
-export interface TranscriptGenerationJobPayload {
-  interviewId: string;
-  candidateId: string;
-  organizationId: string;
-  questions: {
+/** We produce this, one per recorded answer; the transcription service consumes it
+ * (contract: transcript/docs/INTEGRATION.md). `id` is our answer id — also the dedupe
+ * key and the `externalId` echoed back in events. `audioPath` is relative to the
+ * shared audio folder (the service's AUDIO_ROOT); URLs are not accepted. */
+export interface TranscriptionJobPayload {
+  id: string;
+  audioPath: string;
+  language?: string;
+  metadata: {
+    interviewId: string;
+    answerId: string;
     questionId: string;
-    orderIndex: number;
-    questionText: string;
-    mediaUrl: string;
-    mediaMimeType: string;
-    durationSeconds?: number;
-  }[];
-  callbackQueue: 'transcript-ready';
-  requestedAt: string;
+    organizationId: string;
+  };
 }
 
-/** The STT vendor produces this once transcription finishes; we consume it. Carries
- * the transcript only — never a score. */
-export interface TranscriptReadyJobPayload {
-  interviewId: string;
-  candidateId: string;
-  organizationId: string;
-  status: 'SUCCESS' | 'FAILED';
-  errorMessage?: string;
-  transcript?: {
-    combinedText: string;
-    perQuestion: { questionId: string; transcriptText: string }[];
-    language?: string;
-  };
-  processedAt: string;
-  aiServiceJobId?: string;
+/** The transcription service publishes this once a job reaches a terminal state
+ * (`transcription.failed` only after its final attempt). It carries no transcript
+ * text — that is read from the service's `GET /jobs/{externalId}`. */
+export interface TranscriptionEventPayload {
+  event: 'transcription.completed' | 'transcription.failed';
+  externalId: string;
+  status?: string;
+  error?: string;
+  wordCount?: number;
+  durationSeconds?: number;
+  skipped?: boolean;
 }
 
 /** Fully internal — our own producer, our own consumer. The STT vendor never sees

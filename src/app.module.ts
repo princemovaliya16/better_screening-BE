@@ -8,6 +8,7 @@ import { LlmModule } from '@core/llm';
 import { MailModule } from '@core/mail';
 import { QueueModule } from '@core/queue';
 import { StorageModule } from '@core/storage';
+import { TranscriptionModule } from '@core/transcription';
 import { ActivityModule } from '@module/activity';
 import { AuthModule } from '@module/auth';
 import { CandidatesModule } from '@module/candidates';
@@ -33,6 +34,7 @@ import { UsersModule } from '@module/users';
     QueueModule,
     StorageModule,
     LivekitModule,
+    TranscriptionModule,
     ActivityModule,
     NotificationsModule,
     OrganizationsModule,
