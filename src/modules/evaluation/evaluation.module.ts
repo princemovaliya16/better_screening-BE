@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from '@module/activity';
 import { Candidate } from '@module/candidates/entities';
+import { InterviewAnswer } from '@module/interview-session/entities';
 import { Interview } from '@module/interviews/entities';
 import { NotificationsModule } from '@module/notifications';
 import { OrganizationSettings } from '@module/organizations/entities';
@@ -26,6 +27,7 @@ import { EvaluationProcessingProcessor } from './processors/evaluation-processin
     TypeOrmModule.forFeature([
       Interview,
       InterviewTranscript,
+      InterviewAnswer,
       InterviewSummary,
       InterviewQuestionAnalysis,
       Candidate,
