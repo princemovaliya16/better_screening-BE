@@ -1,5 +1,6 @@
 import { Column, Entity, Index } from 'typeorm';
 import { OrgScopedEntity } from '@core/database';
+import type { SpeechMetrics } from '../speech-metrics';
 
 export enum EvaluationRecommendation {
   STRONG_HIRE = 'strong_hire',
@@ -8,15 +9,21 @@ export enum EvaluationRecommendation {
   STRONG_NO_HIRE = 'strong_no_hire',
 }
 
-/** The 5 fixed competency dimensions every evaluation scores (0-100 each) — mirrors
- * the prototype's evaluation view. */
-export interface CompetencyScores {
-  technicalSkills: number;
-  problemSolving: number;
-  communication: number;
-  culturalFit: number;
-  experienceRelevance: number;
-}
+/** The six analysis categories, each scored independently 0–100 (they don't add up
+ * to 100). The overall score is their plain average. */
+export const SCORE_DIMENSIONS = [
+  'knowledge',
+  'communication',
+  'relevance',
+  'jobFit',
+  'problemSolving',
+  'confidence',
+] as const;
+export type ScoreDimension = (typeof SCORE_DIMENSIONS)[number];
+
+/** Category key → 0–100. Keyed loosely because evaluations stored before the six
+ * categories (technicalSkills, culturalFit, …) keep their original keys. */
+export type CompetencyScores = Record<string, number>;
 
 /** One row per interview — the persisted result of our own `EvaluationModule`
  * running the resume × job description × transcript analysis. Never written by the
@@ -47,6 +54,14 @@ export class InterviewSummary extends OrgScopedEntity {
 
   @Column({ type: 'jsonb' })
   competencyScores!: CompetencyScores;
+
+  /** One-sentence justification per category (same keys as competencyScores). */
+  @Column({ type: 'jsonb', nullable: true })
+  scoreReasons?: Record<string, string> | null;
+
+  /** Measured delivery (pace, talk time, pauses) computed from the transcript timings. */
+  @Column({ type: 'jsonb', nullable: true })
+  speechMetrics?: SpeechMetrics | null;
 
   /** The LLM's full structured response, kept verbatim for audit/debugging —
    * separate from the normalized columns above. */
