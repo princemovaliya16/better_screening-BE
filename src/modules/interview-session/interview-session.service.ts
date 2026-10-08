@@ -480,7 +480,11 @@ export class InterviewSessionService {
     const answer = await this.answersRepository.findOne({ where: { egressId: info.egressId } });
     if (!answer || FINAL_STATUSES.includes(answer.status)) return;
 
-    const file = info.fileResults?.[0];
+    // LiveKit Cloud fills only the legacy singular `file` for participant egress and
+    // leaves `fileResults` empty; a self-hosted server populates `fileResults`. Taking
+    // whichever is present keeps a successful upload from being recorded as a failure.
+    const file =
+      info.fileResults?.[0] ?? (info.result?.case === 'file' ? info.result.value : undefined);
     const succeeded =
       (info.status === EgressStatus.EGRESS_COMPLETE ||
         info.status === EgressStatus.EGRESS_LIMIT_REACHED) &&
